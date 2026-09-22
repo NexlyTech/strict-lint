@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -120,6 +120,116 @@ describe("init targets", () => {
     expect(patched.categories).toEqual({ correctness: "error" });
     expect(patched.rules.eqeqeq).toBe("warn");
     expect(patched.rules["strict-lint/folder-structure"]).toBe("error");
+  });
+});
+
+describe("preset selection", () => {
+  const withSource = (files: Record<string, string> = {}) =>
+    project({ devDependencies: { eslint: "^9.0.0" } }, files);
+
+  test("a project that already has source files gets warnings, not errors", () => {
+    const fixture = withSource({ "eslint.config.mjs": "export default [];\n" });
+    mkdirSync(join(fixture.dir, "src"), { recursive: true });
+    writeFileSync(join(fixture.dir, "src", "App.tsx"), "export const App = () => null;\n");
+
+    const { out } = init(fixture.dir, "--no-install");
+
+    expect(fixture.read("eslint.config.mjs")).toContain("strictLint.configs.warn");
+    expect(out).toContain("reporting as warnings");
+  });
+
+  test("an empty project gets the strict preset", () => {
+    const fixture = withSource({ "eslint.config.mjs": "export default [];\n" });
+    init(fixture.dir, "--no-install");
+
+    expect(fixture.read("eslint.config.mjs")).toContain("strictLint.configs.recommended");
+  });
+
+  test("--strict overrides the warning default", () => {
+    const fixture = withSource({ "eslint.config.mjs": "export default [];\n" });
+    mkdirSync(join(fixture.dir, "src"), { recursive: true });
+    writeFileSync(join(fixture.dir, "src", "App.tsx"), "export const App = () => null;\n");
+
+    init(fixture.dir, "--no-install", "--strict");
+
+    expect(fixture.read("eslint.config.mjs")).toContain("strictLint.configs.recommended");
+  });
+
+  test("oxlint severities follow the same preset", () => {
+    const fixture = project({ devDependencies: { oxlint: "^1.0.0" } });
+    mkdirSync(join(fixture.dir, "src"), { recursive: true });
+    writeFileSync(join(fixture.dir, "src", "App.tsx"), "export const App = () => null;\n");
+
+    init(fixture.dir, "--no-install");
+
+    const config = JSON.parse(fixture.read(".oxlintrc.json"));
+    expect(config.rules["strict-lint/folder-structure"]).toBe("warn");
+  });
+});
+
+describe("patching matches what the host config already does", () => {
+  test("a config that already parses TypeScript gets the preset and nothing else", () => {
+    const host = 'import tseslint from "typescript-eslint";\n\nexport default [\n  ...tseslint.configs.recommended,\n];\n';
+    const fixture = project({ devDependencies: { eslint: "^9.0.0" } }, { "eslint.config.mjs": host });
+    const { out } = init(fixture.dir, "--no-install");
+
+    const patched = fixture.read("eslint.config.mjs");
+    expect(patched).toContain("strictLint.configs.recommended,");
+    expect(patched).not.toContain("tsParser");
+    expect(patched).not.toContain("ecmaFeatures");
+    expect(out).not.toContain("@typescript-eslint/parser");
+  });
+
+  test("the host's own language options are left intact", () => {
+    const host = 'import tseslint from "typescript-eslint";\n\nexport default [\n  { languageOptions: { parser: hostParser } },\n];\n';
+    const fixture = project({ devDependencies: { eslint: "^9.0.0" } }, { "eslint.config.mjs": host });
+    init(fixture.dir, "--no-install");
+
+    expect(fixture.read("eslint.config.mjs")).toContain("parser: hostParser");
+  });
+
+  test("eslint-config-next counts as TypeScript coverage", () => {
+    const fixture = project(
+      { devDependencies: { eslint: "^9.0.0", "eslint-config-next": "^16.0.0" } },
+      { "eslint.config.mjs": "export default [\n  base,\n];\n" },
+    );
+    init(fixture.dir, "--no-install");
+
+    expect(fixture.read("eslint.config.mjs")).not.toContain("tsParser");
+  });
+
+  test("a config with no TypeScript support gets the parser, or the rules would skip .tsx", () => {
+    const fixture = project({ devDependencies: { eslint: "^9.0.0" } }, { "eslint.config.mjs": "export default [];\n" });
+    const { out } = init(fixture.dir, "--no-install");
+
+    expect(fixture.read("eslint.config.mjs")).toContain("parser: tsParser");
+    expect(out).toContain("@typescript-eslint/parser");
+  });
+});
+
+describe("whatever init writes parses", () => {
+  const HOSTS: [string, string][] = [
+    ["plain array", "export default [\n  base,\n];\n"],
+    ["next-style defineConfig", "const c = defineConfig([\n  ...next,\n]);\n\nexport default c;\n"],
+    ["no trailing comma", "export default [\n  base\n];\n"],
+    ["empty", "export default [];\n"],
+  ];
+
+  test.each(HOSTS)("%s", (_name, host) => {
+    const fixture = project({ devDependencies: { eslint: "^9.0.0" } }, { "eslint.config.mjs": host });
+    init(fixture.dir, "--no-install");
+
+    const written = join(fixture.dir, "eslint.config.mjs");
+    expect(fixture.read("eslint.config.mjs")).not.toContain(",,");
+    expect(() => execFileSync("node", ["--check", written], { stdio: "pipe" })).not.toThrow();
+  });
+
+  test("a config created from scratch parses too", () => {
+    const fixture = project({ devDependencies: { eslint: "^9.0.0" } });
+    init(fixture.dir, "--no-install");
+
+    const written = join(fixture.dir, "eslint.config.mjs");
+    expect(() => execFileSync("node", ["--check", written], { stdio: "pipe" })).not.toThrow();
   });
 });
 

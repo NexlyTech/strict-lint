@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { PLUGIN_NAME, VERSION, rules } from "./index.js";
 
-const PACKAGE_NAME = "@nexlytech/strict-lint";
+const PACKAGE_NAME = "@nexlytech.dev/strict-lint";
 const CONFIG_FILE = "strictlint.config.json";
 const OXLINT_FILE = ".oxlintrc.json";
 const ESLINT_FILES = ["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", "eslint.config.ts"];

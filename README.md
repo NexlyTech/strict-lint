@@ -1,4 +1,4 @@
-# @nexlytech/strict-lint
+# @nexlytech.dev/strict-lint
 
 Architecture linting for React: **where files live**, **how many components a file declares**, and
 **which native HTML elements are allowed**.
@@ -13,7 +13,7 @@ Zero runtime dependencies.
 ## Install
 
 ```bash
-bun add -d @nexlytech/strict-lint   # or npm install -D / pnpm add -D / yarn add -D
+bun add -d @nexlytech.dev/strict-lint   # or npm install -D / pnpm add -D / yarn add -D
 ```
 
 Works with oxlint `>=1.0` and ESLint `>=8.57`. On ESLint 8.57 flat config is opt-in, so run it with
@@ -24,10 +24,10 @@ Works with oxlint `>=1.0` and ESLint `>=8.57`. On ESLint 8.57 flat config is opt
 One command writes `strictlint.config.json` and wires up whichever linter it finds:
 
 ```bash
-npx  @nexlytech/strict-lint init     # npm
-pnpm dlx @nexlytech/strict-lint init # pnpm
-yarn dlx @nexlytech/strict-lint init # yarn 2+  (yarn 1: use the npx form)
-bunx @nexlytech/strict-lint init     # bun
+npx  @nexlytech.dev/strict-lint init     # npm
+pnpm dlx @nexlytech.dev/strict-lint init # pnpm
+yarn dlx @nexlytech.dev/strict-lint init # yarn 2+  (yarn 1: use the npx form)
+bunx @nexlytech.dev/strict-lint init     # bun
 ```
 
 It detects your package manager, finds your source root, creates or patches `.oxlintrc.json`
@@ -51,7 +51,7 @@ Prefer to wire it by hand? Both linters take the same package.
 
 ```json
 {
-  "jsPlugins": ["@nexlytech/strict-lint"],
+  "jsPlugins": ["@nexlytech.dev/strict-lint"],
   "rules": {
     "strict-lint/file-naming": "error",
     "strict-lint/folder-structure": "error",
@@ -65,14 +65,14 @@ Prefer to wire it by hand? Both linters take the same package.
 Alias the namespace with the object form if `strict-lint` collides:
 
 ```json
-{ "jsPlugins": [{ "name": "arch", "specifier": "@nexlytech/strict-lint" }] }
+{ "jsPlugins": [{ "name": "arch", "specifier": "@nexlytech.dev/strict-lint" }] }
 ```
 
 ### ESLint (flat config)
 
 ```js
 import tsParser from "@typescript-eslint/parser";
-import strictLint from "@nexlytech/strict-lint";
+import strictLint from "@nexlytech.dev/strict-lint";
 
 export default [
   {
@@ -93,7 +93,7 @@ export default [
 Or take the preset, which registers the plugin and turns on every rule:
 
 ```js
-import strictLint from "@nexlytech/strict-lint";
+import strictLint from "@nexlytech.dev/strict-lint";
 
 export default [
   strictLint.configs.recommended, // or strictLint.configs.warn for incremental adoption

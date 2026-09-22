@@ -39,14 +39,27 @@ It reads your `package.json` to decide what to wire up. oxlint in your dependenc
 Both means both, and neither scaffolds oxlint. Your package manager is detected from the runner
 that invoked `init`, falling back to your lockfile.
 
-An existing `eslint.config.*` is never rewritten without `--force`; the block to paste is printed
-instead, because merging someone else's flat config is guesswork. Config files are written before
-the install runs, so a network failure still leaves you with a valid setup and the command to
-finish it.
+An existing `eslint.config.*` is patched in place. The plugin loads inside oxlint's JS runtime, so
+an AST rewriter was not an option; instead a dependency-free scanner finds the config array and
+appends to it, keeping your comments and formatting. It handles the shapes that occur in practice:
+
+```js
+export default [ … ]                                 // plain flat config
+export default defineConfig([ … ])                   // Next, shadcn
+const config = defineConfig([ … ]); export default config
+export default tseslint.config( … )                  // typescript-eslint
+```
+
+Your original is copied to `eslint.config.mjs.bak` first, the inserted lines are printed back as a
+diff, and rerunning is a no-op once the plugin is referenced. Anything it cannot recognise with
+certainty is left untouched and the block is printed for you to paste. Config files are written
+before the install runs, so a network failure still leaves a valid setup and the command to finish
+it.
 
 | Flag | Effect |
 | --- | --- |
 | `--no-install` | Write the config files but skip the dependency install. |
+| `--no-edit` | Print the ESLint block instead of patching an existing config. |
 | `--dry-run` | Print every change, including the install, without performing any of it. |
 | `--force` | Overwrite files that already exist. |
 | `-h`, `--help` | Show usage, including the invocation for each package manager. |
@@ -303,7 +316,7 @@ A line marker covers the line it sits on and the line below. A file marker must 
 
 ```bash
 bun install
-bun test        # 113 tests, ESLint RuleTester
+bun test        # 127 tests, ESLint RuleTester
 bun run typecheck
 bun run build
 ```

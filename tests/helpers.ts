@@ -1,5 +1,13 @@
+import { describe, it } from "bun:test";
 import tsParser from "@typescript-eslint/parser";
 import { RuleTester } from "eslint";
+
+// RuleTester registers through global `describe`/`it` when they exist and runs inline when they do
+// not, and Bun only exposes them to files that import `bun:test`. Without this the rule suites
+// report zero tests depending on module load order.
+const globals = globalThis as Record<string, unknown>;
+globals.describe ??= describe;
+globals.it ??= it;
 import type { RuleModule } from "../src/types.js";
 
 export const ruleTester = new RuleTester({

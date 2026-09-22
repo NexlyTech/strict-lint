@@ -35,9 +35,20 @@ bunx @nexlytech.dev/strict-lint init     # bun
 
 It reads your `package.json` to decide what to wire up. oxlint in your dependencies means
 `.oxlintrc.json` is created or patched in place, preserving the rules already there. ESLint means
-`eslint.config.mjs` is written, along with `@typescript-eslint/parser`, which that config needs.
-Both means both, and neither scaffolds oxlint. Your package manager is detected from the runner
-that invoked `init`, falling back to your lockfile.
+your flat config is patched, or written if you have none. Both means both, and neither scaffolds
+oxlint. Your package manager is detected from the runner that invoked `init`, falling back to your
+lockfile.
+
+**Adding these rules to code that predates them reports warnings, not errors.** A green field gets
+`configs.recommended`; a project that already has source files gets `configs.warn`, so `init` never
+turns your build red on the day you install it. Pass `--strict` to opt into errors immediately, or
+switch the preset by hand once you have cleared the backlog.
+
+The patch stays as small as it can. When your config already parses TypeScript (`typescript-eslint`,
+`eslint-config-next`, or an explicit `@typescript-eslint/parser`) `init` adds one import and one
+preset entry and touches nothing else, because appending its own `languageOptions` would override
+yours. Only a config with no TypeScript support gets the parser block, and only then is
+`@typescript-eslint/parser` installed.
 
 An existing `eslint.config.*` is patched in place. The plugin loads inside oxlint's JS runtime, so
 an AST rewriter was not an option; instead a dependency-free scanner finds the config array and
@@ -60,6 +71,7 @@ it.
 | --- | --- |
 | `--no-install` | Write the config files but skip the dependency install. |
 | `--no-edit` | Print the ESLint block instead of patching an existing config. |
+| `--strict` | Report as errors even in a project that already has source files. |
 | `--dry-run` | Print every change, including the install, without performing any of it. |
 | `--force` | Overwrite files that already exist. |
 | `-h`, `--help` | Show usage, including the invocation for each package manager. |
@@ -316,7 +328,7 @@ A line marker covers the line it sits on and the line below. A file marker must 
 
 ```bash
 bun install
-bun test        # 127 tests, ESLint RuleTester
+bun test        # 161 tests, ESLint RuleTester
 bun run typecheck
 bun run build
 ```

@@ -1,20 +1,32 @@
 #!/usr/bin/env node
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { PLUGIN_NAME, VERSION, rules } from "./index.js";
 
 const PACKAGE_NAME = "@nexlytech.dev/strict-lint";
+const PARSER_NAME = "@typescript-eslint/parser";
 const CONFIG_FILE = "strictlint.config.json";
 const OXLINT_FILE = ".oxlintrc.json";
-const ESLINT_FILES = ["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", "eslint.config.ts"];
+const ESLINT_FILE = "eslint.config.mjs";
+const ESLINT_FILES = [
+  "eslint.config.js",
+  "eslint.config.mjs",
+  "eslint.config.cjs",
+  "eslint.config.ts",
+  "eslint.config.mts",
+];
+
+const KNOWN_FLAGS = new Set(["-h", "--help", "-v", "--version", "--force", "--dry-run", "--no-install"]);
 
 type PackageManager = "bun" | "pnpm" | "yarn" | "npm";
+type Target = "oxlint" | "eslint";
 
-const INSTALL: Record<PackageManager, string> = {
-  bun: `bun add -d ${PACKAGE_NAME}`,
-  pnpm: `pnpm add -D ${PACKAGE_NAME}`,
-  yarn: `yarn add -D ${PACKAGE_NAME}`,
-  npm: `npm install -D ${PACKAGE_NAME}`,
+const ADD: Record<PackageManager, string[]> = {
+  bun: ["add", "-d"],
+  pnpm: ["add", "-D"],
+  yarn: ["add", "-D"],
+  npm: ["install", "-D"],
 };
 
 const EXEC: Record<PackageManager, string> = {
@@ -23,6 +35,8 @@ const EXEC: Record<PackageManager, string> = {
   yarn: `yarn dlx ${PACKAGE_NAME} init`,
   npm: `npx ${PACKAGE_NAME} init`,
 };
+
+const RUNNER: Record<PackageManager, string> = { bun: "bunx", pnpm: "pnpm exec", yarn: "yarn", npm: "npx" };
 
 const LOCKFILES: [string, PackageManager][] = [
   ["bun.lock", "bun"],
@@ -74,6 +88,14 @@ function detectSourceRoot(cwd: string): string {
   return "src";
 }
 
+/** Declared dependencies decide what to wire up; a stray config file is the fallback signal. */
+function detectTargets(cwd: string, dependencies: Set<string>, eslintConfig: string | undefined): Target[] {
+  const targets: Target[] = [];
+  if (dependencies.has("oxlint") || existsSync(join(cwd, OXLINT_FILE))) targets.push("oxlint");
+  if (dependencies.has("eslint") || eslintConfig !== undefined) targets.push("eslint");
+  return targets.length > 0 ? targets : ["oxlint"];
+}
+
 function seedConfig(root: string): string {
   return `${JSON.stringify(
     {
@@ -93,9 +115,9 @@ function ruleEntries(): Record<string, string> {
   return Object.fromEntries(Object.keys(rules).map((name) => [`${PLUGIN_NAME}/${name}`, "error"]));
 }
 
-function eslintSnippet(): string {
+function eslintConfigSource(): string {
   return `import strictLint from "${PACKAGE_NAME}";
-import tsParser from "@typescript-eslint/parser";
+import tsParser from "${PARSER_NAME}";
 
 export default [
   strictLint.configs.recommended,
@@ -103,7 +125,12 @@ export default [
     files: ["**/*.{ts,tsx,js,jsx}"],
     languageOptions: { parser: tsParser, parserOptions: { ecmaFeatures: { jsx: true } } },
   },
-];`;
+];
+`;
+}
+
+function installCommand(manager: PackageManager, packages: string[]): string {
+  return [manager, ...ADD[manager], ...packages].join(" ");
 }
 
 function help(manager: PackageManager): string {
@@ -113,11 +140,13 @@ Usage
   ${EXEC[manager]}
 
 Commands
-  init            Write ${CONFIG_FILE} and wire up the linters found in this project.
+  init            Write ${CONFIG_FILE}, wire up the linters this project uses, and
+                  install the plugin with the package manager it detects.
 
 Options
+  --no-install    Write the config files but skip the dependency install.
   --force         Overwrite files that already exist.
-  --dry-run       Print what would change without writing anything.
+  --dry-run       Print what would change without writing or installing anything.
   -h, --help      Show this message.
   -v, --version   Print the version.
 
@@ -135,7 +164,7 @@ interface Plan {
   note?: string;
 }
 
-function planOxlint(cwd: string, force: boolean): Plan | null {
+function planOxlint(cwd: string, force: boolean): Plan {
   const path = join(cwd, OXLINT_FILE);
   const entries = ruleEntries();
 
@@ -176,6 +205,33 @@ function planOxlint(cwd: string, force: boolean): Plan | null {
   };
 }
 
+/** Merging someone's flat config is guesswork, so an existing one is only ever printed for them. */
+function planEslint(cwd: string, existing: string | undefined, force: boolean): Plan {
+  if (existing !== undefined && !force) {
+    return {
+      path: join(cwd, existing),
+      contents: "",
+      action: "skip",
+      note: `${existing} already exists; add the block printed below, or pass --force to replace it.`,
+    };
+  }
+  const name = existing ?? ESLINT_FILE;
+  return {
+    path: join(cwd, name),
+    contents: eslintConfigSource(),
+    action: existing === undefined ? "create" : "update",
+  };
+}
+
+function install(cwd: string, manager: PackageManager, packages: string[]): boolean {
+  const result = spawnSync(manager, [...ADD[manager], ...packages], {
+    cwd,
+    stdio: "inherit",
+    shell: process.platform === "win32",
+  });
+  return result.status === 0;
+}
+
 function run(argv: string[]): number {
   const cwd = process.cwd();
   const manager = detectPackageManager(cwd);
@@ -190,6 +246,12 @@ function run(argv: string[]): number {
     process.stdout.write(`${VERSION}\n`);
     return 0;
   }
+
+  const unknown = [...flags].filter((flag) => !KNOWN_FLAGS.has(flag));
+  if (unknown.length > 0) {
+    process.stderr.write(`Unknown option${unknown.length > 1 ? "s" : ""} ${unknown.join(", ")}.\n\n${help(manager)}\n`);
+    return 1;
+  }
   if (command !== "init") {
     process.stderr.write(`${command ? `Unknown command \`${command}\`.` : "No command given."}\n\n${help(manager)}\n`);
     return 1;
@@ -202,47 +264,77 @@ function run(argv: string[]): number {
 
   const force = flags.has("--force");
   const dryRun = flags.has("--dry-run");
+  const skipInstall = flags.has("--no-install");
   const dependencies = dependencyNames(cwd);
+  const eslintConfig = ESLINT_FILES.find((name) => existsSync(join(cwd, name)));
+  const targets = detectTargets(cwd, dependencies, eslintConfig);
   const root = detectSourceRoot(cwd);
   const plans: Plan[] = [];
 
   const configPath = join(cwd, CONFIG_FILE);
   plans.push(
     existsSync(configPath) && !force
-      ? { path: configPath, contents: "", action: "skip", note: `${CONFIG_FILE} already exists; pass --force to replace it.` }
+      ? {
+          path: configPath,
+          contents: "",
+          action: "skip",
+          note: `${CONFIG_FILE} already exists; pass --force to replace it.`,
+        }
       : { path: configPath, contents: seedConfig(root), action: existsSync(configPath) ? "update" : "create" },
   );
 
-  const hasOxlint = dependencies.has("oxlint") || existsSync(join(cwd, OXLINT_FILE));
-  if (hasOxlint) {
-    const plan = planOxlint(cwd, force);
-    if (plan) plans.push(plan);
-  }
+  if (targets.includes("oxlint")) plans.push(planOxlint(cwd, force));
+  if (targets.includes("eslint")) plans.push(planEslint(cwd, eslintConfig, force));
 
   for (const plan of plans) {
     const label = relative(cwd, plan.path) || plan.path;
+    const suffix = plan.note ? ` (${plan.note})` : "";
     if (plan.action === "skip") {
-      process.stdout.write(`  skip    ${label}${plan.note ? ` (${plan.note})` : ""}\n`);
+      process.stdout.write(`  skip    ${label}${suffix}\n`);
       continue;
     }
     if (!dryRun) writeFileSync(plan.path, plan.contents, "utf8");
-    process.stdout.write(`  ${plan.action === "create" ? "create" : "update"}  ${label}${plan.note ? ` (${plan.note})` : ""}\n`);
+    process.stdout.write(`  ${plan.action}  ${label}${suffix}\n`);
   }
 
-  const eslintConfig = ESLINT_FILES.find((name) => existsSync(join(cwd, name)));
-  const hasEslint = dependencies.has("eslint") || eslintConfig !== undefined;
+  const eslintUntouched = targets.includes("eslint") && eslintConfig !== undefined && !force;
+  if (eslintUntouched) {
+    process.stdout.write(`\nAdd this to ${eslintConfig}:\n\n${eslintConfigSource().trimEnd().replace(/^/gm, "  ")}\n`);
+  }
+
+  const packages = [
+    ...(dependencies.has(PACKAGE_NAME) ? [] : [PACKAGE_NAME]),
+    ...(targets.includes("eslint") && !dependencies.has(PARSER_NAME) ? [PARSER_NAME] : []),
+  ];
+
+  let installed = true;
+  if (packages.length > 0) {
+    if (dryRun) {
+      process.stdout.write(`\n  would run  ${installCommand(manager, packages)}\n`);
+    } else if (skipInstall) {
+      process.stdout.write(`\nInstall the dependencies\n  ${installCommand(manager, packages)}\n`);
+    } else {
+      process.stdout.write(`\n  install ${installCommand(manager, packages)}\n\n`);
+      installed = install(cwd, manager, packages);
+    }
+  }
+
+  if (!installed) {
+    process.stderr.write(
+      `\nThe install failed. Config files are written; finish with:\n  ${installCommand(manager, packages)}\n`,
+    );
+    return 1;
+  }
+
+  if (dryRun) {
+    process.stdout.write("\nDry run: nothing was written or installed.\n");
+    return 0;
+  }
 
   process.stdout.write("\nNext steps\n");
-  if (!dependencies.has(PACKAGE_NAME)) {
-    process.stdout.write(`  1. Install the plugin:  ${INSTALL[manager]}\n`);
-  }
-  if (hasEslint) {
-    process.stdout.write(`  2. Add this to ${eslintConfig ?? "eslint.config.mjs"}:\n\n${eslintSnippet().replace(/^/gm, "     ")}\n`);
-  }
-  if (!hasOxlint && !hasEslint) {
-    process.stdout.write("  2. Install oxlint or ESLint, then run this command again to wire it up.\n");
-  }
-  if (dryRun) process.stdout.write("\nDry run: nothing was written.\n");
+  if (targets.includes("oxlint")) process.stdout.write(`  Lint with oxlint:  ${RUNNER[manager]} oxlint\n`);
+  if (targets.includes("eslint")) process.stdout.write(`  Lint with ESLint:  ${RUNNER[manager]} eslint .\n`);
+  process.stdout.write(`  Tune the rules in ${CONFIG_FILE}\n`);
 
   return 0;
 }

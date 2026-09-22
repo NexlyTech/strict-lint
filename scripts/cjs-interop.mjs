@@ -9,4 +9,6 @@ if (!existsSync(target)) {
   process.exit(1);
 }
 
-appendFileSync(target, "\nmodule.exports = Object.assign(exports.default, exports);\n");
+// A fresh object rather than `exports.default` itself: assigning onto the plugin would graft the
+// module's other named exports, and a circular `default`, onto the object ESLint receives.
+appendFileSync(target, "\nmodule.exports = Object.assign({}, exports.default, exports);\n");

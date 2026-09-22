@@ -7,7 +7,7 @@ import type { Plugin, RuleModule } from "./types.js";
 
 export const PLUGIN_NAME = "strict-lint";
 // Keep in sync with package.json — linters surface this in plugin metadata.
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 
 export const rules = {
   "file-naming": fileNaming,

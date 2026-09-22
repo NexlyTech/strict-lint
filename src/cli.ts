@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
+import { patchFlatConfig } from "./eslint-patch.js";
 import { PLUGIN_NAME, VERSION, rules } from "./index.js";
 
 const PACKAGE_NAME = "@nexlytech.dev/strict-lint";
@@ -17,7 +18,16 @@ const ESLINT_FILES = [
   "eslint.config.mts",
 ];
 
-const KNOWN_FLAGS = new Set(["-h", "--help", "-v", "--version", "--force", "--dry-run", "--no-install"]);
+const KNOWN_FLAGS = new Set([
+  "-h",
+  "--help",
+  "-v",
+  "--version",
+  "--force",
+  "--dry-run",
+  "--no-install",
+  "--no-edit",
+]);
 
 type PackageManager = "bun" | "pnpm" | "yarn" | "npm";
 type Target = "oxlint" | "eslint";
@@ -115,18 +125,24 @@ function ruleEntries(): Record<string, string> {
   return Object.fromEntries(Object.keys(rules).map((name) => [`${PLUGIN_NAME}/${name}`, "error"]));
 }
 
-function eslintConfigSource(): string {
-  return `import strictLint from "${PACKAGE_NAME}";
-import tsParser from "${PARSER_NAME}";
+const ESLINT_IMPORTS = `import strictLint from "${PACKAGE_NAME}";
+import tsParser from "${PARSER_NAME}";`;
 
-export default [
-  strictLint.configs.recommended,
-  {
-    files: ["**/*.{ts,tsx,js,jsx}"],
-    languageOptions: { parser: tsParser, parserOptions: { ecmaFeatures: { jsx: true } } },
-  },
-];
-`;
+const ESLINT_ENTRIES = `strictLint.configs.recommended,
+{
+  files: ["**/*.{ts,tsx,js,jsx}"],
+  languageOptions: { parser: tsParser, parserOptions: { ecmaFeatures: { jsx: true } } },
+}`;
+
+function indented(block: string): string {
+  return block
+    .split("\n")
+    .map((line) => (line === "" ? "" : `  ${line}`))
+    .join("\n");
+}
+
+function eslintConfigSource(): string {
+  return `${ESLINT_IMPORTS}\n\nexport default [\n${indented(ESLINT_ENTRIES)},\n];\n`;
 }
 
 function installCommand(manager: PackageManager, packages: string[]): string {
@@ -145,6 +161,7 @@ Commands
 
 Options
   --no-install    Write the config files but skip the dependency install.
+  --no-edit       Print the ESLint block instead of patching an existing config.
   --force         Overwrite files that already exist.
   --dry-run       Print what would change without writing or installing anything.
   -h, --help      Show this message.
@@ -162,6 +179,12 @@ interface Plan {
   contents: string;
   action: "create" | "update" | "skip";
   note?: string;
+  /** Copy the file to `<name>.bak` before overwriting it. */
+  backup?: boolean;
+  /** Lines the patch introduced, printed back as a diff. */
+  added?: string[];
+  /** Print the paste-in block, because the file could not be edited safely. */
+  printSnippet?: boolean;
 }
 
 function planOxlint(cwd: string, force: boolean): Plan {
@@ -205,22 +228,39 @@ function planOxlint(cwd: string, force: boolean): Plan {
   };
 }
 
-/** Merging someone's flat config is guesswork, so an existing one is only ever printed for them. */
-function planEslint(cwd: string, existing: string | undefined, force: boolean): Plan {
-  if (existing !== undefined && !force) {
-    return {
-      path: join(cwd, existing),
-      contents: "",
-      action: "skip",
-      note: `${existing} already exists; add the block printed below, or pass --force to replace it.`,
-    };
+function planEslint(cwd: string, existing: string | undefined, force: boolean, noEdit: boolean): Plan {
+  if (existing === undefined) {
+    return { path: join(cwd, ESLINT_FILE), contents: eslintConfigSource(), action: "create" };
   }
-  const name = existing ?? ESLINT_FILE;
-  return {
-    path: join(cwd, name),
-    contents: eslintConfigSource(),
-    action: existing === undefined ? "create" : "update",
-  };
+
+  const path = join(cwd, existing);
+  if (force) {
+    return { path, contents: eslintConfigSource(), action: "update", backup: true, note: "replaced wholesale" };
+  }
+  if (noEdit) {
+    return { path, contents: "", action: "skip", note: "--no-edit given", printSnippet: true };
+  }
+
+  let source: string;
+  try {
+    source = readFileSync(path, "utf8");
+  } catch {
+    return { path, contents: "", action: "skip", note: `${existing} could not be read`, printSnippet: true };
+  }
+
+  const result = patchFlatConfig(source, {
+    imports: ESLINT_IMPORTS,
+    entries: ESLINT_ENTRIES,
+    marker: PACKAGE_NAME,
+  });
+
+  if (result.status === "present") {
+    return { path, contents: "", action: "skip", note: `${existing} already references the plugin` };
+  }
+  if (result.status === "unsupported") {
+    return { path, contents: "", action: "skip", note: result.reason, printSnippet: true };
+  }
+  return { path, contents: result.source, action: "update", backup: true, added: result.added };
 }
 
 function install(cwd: string, manager: PackageManager, packages: string[]): boolean {
@@ -284,7 +324,7 @@ function run(argv: string[]): number {
   );
 
   if (targets.includes("oxlint")) plans.push(planOxlint(cwd, force));
-  if (targets.includes("eslint")) plans.push(planEslint(cwd, eslintConfig, force));
+  if (targets.includes("eslint")) plans.push(planEslint(cwd, eslintConfig, force, flags.has("--no-edit")));
 
   for (const plan of plans) {
     const label = relative(cwd, plan.path) || plan.path;
@@ -293,12 +333,15 @@ function run(argv: string[]): number {
       process.stdout.write(`  skip    ${label}${suffix}\n`);
       continue;
     }
-    if (!dryRun) writeFileSync(plan.path, plan.contents, "utf8");
-    process.stdout.write(`  ${plan.action}  ${label}${suffix}\n`);
+    if (!dryRun) {
+      if (plan.backup) copyFileSync(plan.path, `${plan.path}.bak`);
+      writeFileSync(plan.path, plan.contents, "utf8");
+    }
+    process.stdout.write(`  ${plan.action}  ${label}${suffix}${plan.backup ? ` (backup: ${label}.bak)` : ""}\n`);
+    for (const line of plan.added ?? []) process.stdout.write(`          + ${line}\n`);
   }
 
-  const eslintUntouched = targets.includes("eslint") && eslintConfig !== undefined && !force;
-  if (eslintUntouched) {
+  if (plans.some((plan) => plan.printSnippet)) {
     process.stdout.write(`\nAdd this to ${eslintConfig}:\n\n${eslintConfigSource().trimEnd().replace(/^/gm, "  ")}\n`);
   }
 

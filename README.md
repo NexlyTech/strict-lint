@@ -13,13 +13,39 @@ Zero runtime dependencies.
 ## Install
 
 ```bash
-bun add -d @nexlytech/strict-lint
+bun add -d @nexlytech/strict-lint   # or npm install -D / pnpm add -D / yarn add -D
 ```
 
 Works with oxlint `>=1.0` and ESLint `>=8.57`. On ESLint 8.57 flat config is opt-in, so run it with
 `ESLINT_USE_FLAT_CONFIG=true`; ESLint 9 and 10 need no flag. Node `>=18`.
 
+## Quick start
+
+One command writes `strictlint.config.json` and wires up whichever linter it finds:
+
+```bash
+npx  @nexlytech/strict-lint init     # npm
+pnpm dlx @nexlytech/strict-lint init # pnpm
+yarn dlx @nexlytech/strict-lint init # yarn 2+  (yarn 1: use the npx form)
+bunx @nexlytech/strict-lint init     # bun
+```
+
+It detects your package manager, finds your source root, creates or patches `.oxlintrc.json`
+in place while preserving the rules already there, and prints the flat-config block to paste when
+ESLint is in use. It never overwrites an existing `eslint.config.*`.
+
+| Flag | Effect |
+| --- | --- |
+| `--dry-run` | Print every change without writing a file. |
+| `--force` | Overwrite files that already exist. |
+| `-h`, `--help` | Show usage, including the invocation for each package manager. |
+| `-v`, `--version` | Print the version. |
+
+Re-running `init` is safe: it skips files it has already written and reports why.
+
 ## Setup
+
+Prefer to wire it by hand? Both linters take the same package.
 
 ### oxlint
 

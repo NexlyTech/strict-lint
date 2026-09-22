@@ -44,8 +44,14 @@
     },
     "./package.json": "./package.json"
   },
+  "bin": {
+    "strict-lint": "./dist/cli.mjs"
+  },
   "files": [
     "dist",
+    "!dist/cli.cjs",
+    "!dist/cli.d.cts",
+    "!dist/cli.d.mts",
     "README.md",
     "LICENSE"
   ],

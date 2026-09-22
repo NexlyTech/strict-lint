@@ -62,14 +62,45 @@ describe("init targets", () => {
     expect(fixture.has("eslint.config.mjs")).toBe(true);
   });
 
-  test("an existing flat config is printed, never rewritten", () => {
-    const original = "export default [];\n";
+  test("an existing flat config is patched in place", () => {
+    const original = 'import js from "@eslint/js";\n\nexport default [\n  js.configs.recommended,\n];\n';
+    const fixture = project({ devDependencies: { eslint: "^9.0.0" } }, { "eslint.config.mjs": original });
+    const { out } = init(fixture.dir, "--no-install");
+
+    const patched = fixture.read("eslint.config.mjs");
+    expect(patched).toContain("strictLint.configs.recommended");
+    expect(patched).toContain("js.configs.recommended,");
+    expect(fixture.read("eslint.config.mjs.bak")).toBe(original);
+    expect(out).toContain("backup: eslint.config.mjs.bak");
+  });
+
+  test("patching is idempotent", () => {
+    const fixture = project({ devDependencies: { eslint: "^9.0.0" } }, { "eslint.config.mjs": "export default [];\n" });
+    init(fixture.dir, "--no-install");
+    const once = fixture.read("eslint.config.mjs");
+    const { out } = init(fixture.dir, "--no-install");
+
+    expect(fixture.read("eslint.config.mjs")).toBe(once);
+    expect(out).toContain("already references the plugin");
+  });
+
+  test("a shape it cannot recognise is left alone and printed instead", () => {
+    const original = "export default makeConfig;\n";
     const fixture = project({ devDependencies: { eslint: "^9.0.0" } }, { "eslint.config.mjs": original });
     const { out } = init(fixture.dir, "--no-install");
 
     expect(fixture.read("eslint.config.mjs")).toBe(original);
+    expect(fixture.has("eslint.config.mjs.bak")).toBe(false);
     expect(out).toContain("Add this to eslint.config.mjs");
-    expect(out).toContain("strictLint.configs.recommended");
+  });
+
+  test("--no-edit prints rather than patching", () => {
+    const original = "export default [];\n";
+    const fixture = project({ devDependencies: { eslint: "^9.0.0" } }, { "eslint.config.mjs": original });
+    const { out } = init(fixture.dir, "--no-install", "--no-edit");
+
+    expect(fixture.read("eslint.config.mjs")).toBe(original);
+    expect(out).toContain("Add this to eslint.config.mjs");
   });
 
   test("--force replaces an existing flat config", () => {

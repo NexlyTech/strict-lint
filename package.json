@@ -1,6 +1,6 @@
 {
   "name": "@nexlytech.dev/strict-lint",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Folder-structure, one-component-per-file and native-element linting for React. One rule core, runs on both ESLint and oxlint.",
   "keywords": [
     "eslint",

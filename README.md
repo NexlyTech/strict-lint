@@ -16,27 +16,38 @@ Zero runtime dependencies.
 bun add -d @nexlytech.dev/strict-lint   # or npm install -D / pnpm add -D / yarn add -D
 ```
 
+Or skip this and let [`init`](#quick-start) install and configure it for you.
+
 Works with oxlint `>=1.0` and ESLint `>=8.57`. On ESLint 8.57 flat config is opt-in, so run it with
 `ESLINT_USE_FLAT_CONFIG=true`; ESLint 9 and 10 need no flag. Node `>=18`.
 
 ## Quick start
 
-One command writes `strictlint.config.json` and wires up whichever linter it finds:
+One command sets the whole thing up — installs the plugin, writes `strictlint.config.json`, and
+wires up the linter your project already uses:
 
 ```bash
-npx  @nexlytech.dev/strict-lint init     # npm
+npx @nexlytech.dev/strict-lint init      # npm
 pnpm dlx @nexlytech.dev/strict-lint init # pnpm
 yarn dlx @nexlytech.dev/strict-lint init # yarn 2+  (yarn 1: use the npx form)
 bunx @nexlytech.dev/strict-lint init     # bun
 ```
 
-It detects your package manager, finds your source root, creates or patches `.oxlintrc.json`
-in place while preserving the rules already there, and prints the flat-config block to paste when
-ESLint is in use. It never overwrites an existing `eslint.config.*`.
+It reads your `package.json` to decide what to wire up. oxlint in your dependencies means
+`.oxlintrc.json` is created or patched in place, preserving the rules already there. ESLint means
+`eslint.config.mjs` is written, along with `@typescript-eslint/parser`, which that config needs.
+Both means both, and neither scaffolds oxlint. Your package manager is detected from the runner
+that invoked `init`, falling back to your lockfile.
+
+An existing `eslint.config.*` is never rewritten without `--force`; the block to paste is printed
+instead, because merging someone else's flat config is guesswork. Config files are written before
+the install runs, so a network failure still leaves you with a valid setup and the command to
+finish it.
 
 | Flag | Effect |
 | --- | --- |
-| `--dry-run` | Print every change without writing a file. |
+| `--no-install` | Write the config files but skip the dependency install. |
+| `--dry-run` | Print every change, including the install, without performing any of it. |
 | `--force` | Overwrite files that already exist. |
 | `-h`, `--help` | Show usage, including the invocation for each package manager. |
 | `-v`, `--version` | Print the version. |
@@ -292,7 +303,7 @@ A line marker covers the line it sits on and the line below. A file marker must 
 
 ```bash
 bun install
-bun test        # 99 tests, ESLint RuleTester
+bun test        # 113 tests, ESLint RuleTester
 bun run typecheck
 bun run build
 ```

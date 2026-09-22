@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, statSync } from "node:fs";
 import { dirname, join, isAbsolute, resolve } from "node:path";
 import { DEFAULT_CONFIG } from "./defaults.js";
 import type {
@@ -17,7 +17,14 @@ const PACKAGE_JSON_KEY = "strictLint";
 
 type RawRecord = Record<string, unknown>;
 
-const fileCache = new Map<string, RawRecord | null>();
+interface Discovered {
+  record: RawRecord | null;
+  /** The file the record came from, re-stat'd on each hit so edits apply without a restart. */
+  source?: string;
+  mtimeMs?: number;
+}
+
+const fileCache = new Map<string, Discovered>();
 const resolvedCache = new Map<string, StrictLintConfig>();
 
 function readJson(path: string): RawRecord | null {
@@ -54,12 +61,16 @@ function readConfigFile(path: string): RawRecord {
   return parsed as RawRecord;
 }
 
-/** Walks up from `startDir` until a config file, a package boundary, or the filesystem root. */
+/**
+ * Walks up from `startDir` until a config file, the repository root, or the filesystem root.
+ * Stopping at `.git` is what keeps a project without a config from inheriting one from `$HOME`.
+ */
 function discover(startDir: string): RawRecord | null {
   const cached = fileCache.get(startDir);
-  if (cached !== undefined) return cached;
+  if (cached && isFresh(cached)) return cached.record;
 
   let found: RawRecord | null = null;
+  let source: string | undefined;
   let dir = startDir;
 
   while (true) {
@@ -67,6 +78,7 @@ function discover(startDir: string): RawRecord | null {
       const candidate = join(dir, name);
       if (existsSync(candidate)) {
         found = readConfigFile(candidate);
+        source = candidate;
         break;
       }
     }
@@ -78,17 +90,32 @@ function discover(startDir: string): RawRecord | null {
       const scoped = pkg?.[PACKAGE_JSON_KEY];
       if (scoped && typeof scoped === "object" && !Array.isArray(scoped)) {
         found = scoped as RawRecord;
+        source = pkgPath;
         break;
       }
     }
+
+    if (existsSync(join(dir, ".git"))) break;
 
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
 
-  fileCache.set(startDir, found);
+  fileCache.set(startDir, { record: found, source, mtimeMs: source ? mtimeOf(source) : undefined });
   return found;
+}
+
+function mtimeOf(path: string): number | undefined {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
+function isFresh(entry: Discovered): boolean {
+  return entry.source === undefined || mtimeOf(entry.source) === entry.mtimeMs;
 }
 
 function asStringArray(value: unknown): string[] | null {
@@ -254,6 +281,9 @@ export function mergeConfig(...layers: (RawRecord | null | undefined)[]): Strict
 export function loadConfig(filename: string, inline?: RawRecord): StrictLintConfig {
   const startDir = isAbsolute(filename) ? dirname(filename) : dirname(resolve(filename));
   const cacheKey = `${toPosix(startDir)}\u0000${inline ? JSON.stringify(inline) : ""}`;
+
+  const cached = fileCache.get(startDir);
+  if (cached && !isFresh(cached)) resolvedCache.delete(cacheKey);
 
   let resolved = resolvedCache.get(cacheKey);
   if (!resolved) {

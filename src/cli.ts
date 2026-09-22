@@ -145,6 +145,11 @@ function eslintConfigSource(): string {
   return `${ESLINT_IMPORTS}\n\nexport default [\n${indented(ESLINT_ENTRIES)},\n];\n`;
 }
 
+/** What to paste when the existing config could not be edited: imports, then array entries. */
+function eslintSnippet(): string {
+  return `${ESLINT_IMPORTS}\n\n// …then add these to the array your config exports:\n${ESLINT_ENTRIES},`;
+}
+
 function installCommand(manager: PackageManager, packages: string[]): string {
   return [manager, ...ADD[manager], ...packages].join(" ");
 }
@@ -320,7 +325,12 @@ function run(argv: string[]): number {
           action: "skip",
           note: `${CONFIG_FILE} already exists; pass --force to replace it.`,
         }
-      : { path: configPath, contents: seedConfig(root), action: existsSync(configPath) ? "update" : "create" },
+      : {
+          path: configPath,
+          contents: seedConfig(root),
+          action: existsSync(configPath) ? "update" : "create",
+          backup: existsSync(configPath),
+        },
   );
 
   if (targets.includes("oxlint")) plans.push(planOxlint(cwd, force));
@@ -334,7 +344,7 @@ function run(argv: string[]): number {
       continue;
     }
     if (!dryRun) {
-      if (plan.backup) copyFileSync(plan.path, `${plan.path}.bak`);
+      if (plan.backup && !existsSync(`${plan.path}.bak`)) copyFileSync(plan.path, `${plan.path}.bak`);
       writeFileSync(plan.path, plan.contents, "utf8");
     }
     process.stdout.write(`  ${plan.action}  ${label}${suffix}${plan.backup ? ` (backup: ${label}.bak)` : ""}\n`);
@@ -342,7 +352,7 @@ function run(argv: string[]): number {
   }
 
   if (plans.some((plan) => plan.printSnippet)) {
-    process.stdout.write(`\nAdd this to ${eslintConfig}:\n\n${eslintConfigSource().trimEnd().replace(/^/gm, "  ")}\n`);
+    process.stdout.write(`\nAdd this to ${eslintConfig}:\n\n${eslintSnippet().replace(/^/gm, "  ")}\n`);
   }
 
   const packages = [

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearConfigCache, loadConfig, mergeConfig } from "../src/config/load.js";
@@ -48,5 +48,35 @@ describe("config discovery", () => {
     writeFileSync(join(root, "strictlint.config.json"), "{ not json");
     expect(() => loadConfig(join(root, "src", "app", "page.tsx"))).toThrow(/is not valid JSON/);
     clearConfigCache();
+  });
+});
+
+describe("discovery boundaries", () => {
+  test("a project without a config does not inherit one from above the repo root", () => {
+    const outer = mkdtempSync(join(tmpdir(), "strict-lint-outer-"));
+    writeFileSync(join(outer, "strictlint.config.json"), JSON.stringify({ components: { max: 9 } }));
+
+    const repo = join(outer, "repo");
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    mkdirSync(join(repo, "src"), { recursive: true });
+
+    clearConfigCache();
+    const config = loadConfig(join(repo, "src", "App.tsx"));
+    expect(config.components.max).toBe(DEFAULT_CONFIG.components.max);
+  });
+
+  test("editing a config file takes effect without clearing the cache", () => {
+    const repo = mkdtempSync(join(tmpdir(), "strict-lint-live-"));
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    const configPath = join(repo, "strictlint.config.json");
+    const file = join(repo, "App.tsx");
+
+    writeFileSync(configPath, JSON.stringify({ components: { max: 2 } }));
+    clearConfigCache();
+    expect(loadConfig(file).components.max).toBe(2);
+
+    writeFileSync(configPath, JSON.stringify({ components: { max: 5 } }));
+    utimesSync(configPath, new Date(), new Date(Date.now() + 2000));
+    expect(loadConfig(file).components.max).toBe(5);
   });
 });

@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { patchFlatConfig, type FlatConfigPatch } from "../src/eslint-patch.js";
 
 const PATCH: FlatConfigPatch = {
@@ -104,5 +108,88 @@ export default defineConfig([]);
   test("a config with no imports at all still gets them", () => {
     const out = patch(`export default [];\n`);
     expect(out.startsWith('import strictLint from "@nexlytech.dev/strict-lint";')).toBe(true);
+  });
+});
+
+describe("the output always parses", () => {
+  const SHAPES: [string, string][] = [
+    ["plain array", 'export default [\n  a,\n];\n'],
+    ["no trailing comma", 'export default [\n  a\n];\n'],
+    ["last entry followed by a line comment", 'export default [\n  a // keep last\n];\n'],
+    ["last entry followed by a block comment", 'export default [\n  a /* note */\n];\n'],
+    ["a body of only comments", 'export default [\n  // nothing yet\n];\n'],
+    ["empty array", "export default [];\n"],
+    ["single line", "export default [a];\n"],
+    ["defineConfig", 'export default defineConfig([\n  a\n]);\n'],
+    ["variadic call", "export default tseslint.config(a, b);\n"],
+    ["variable indirection", "const c = defineConfig([\n  a\n]);\n\nexport default c;\n"],
+    ["CRLF", "export default [\r\n  a,\r\n];\r\n"],
+    ["regex with an unbalanced bracket", 'export default [\n  { name: /[/]/.source }\n];\n'],
+    ["strings holding brackets", 'export default [\n  { name: "] ) }" }\n];\n'],
+    ["side-effect import", 'import "./polyfill";\nimport a from "a";\n\nexport default [a];\n'],
+    ["multi-line import list", 'import {\n  a,\n  b,\n} from "x";\n\nexport default [a];\n'],
+  ];
+
+  test.each(SHAPES)("%s", (_name, source) => {
+    const result = patchFlatConfig(source, PATCH);
+    expect(result.status).toBe("patched");
+    if (result.status !== "patched") return;
+
+    const file = join(mkdtempSync(join(tmpdir(), "flat-")), "eslint.config.mjs");
+    writeFileSync(file, result.source);
+    expect(() => execFileSync("node", ["--check", file], { stdio: "pipe" })).not.toThrow();
+  });
+
+  test("a CommonJS config is named as such rather than guessed at", () => {
+    const result = patchFlatConfig("module.exports = [\n  a,\n];\n", PATCH);
+    expect(result.status).toBe("unsupported");
+    if (result.status === "unsupported") expect(result.reason).toContain("CommonJS");
+  });
+});
+
+describe("comments never win a scan", () => {
+  test("a commented-out import does not capture the insertion point", () => {
+    const source = `/*
+import legacy from "./legacy.js";
+*/
+import js from "@eslint/js";
+
+export default [
+  js.configs.recommended,
+];
+`;
+    const out = patch(source);
+    const real = out.indexOf('import js from "@eslint/js";');
+    const inserted = out.indexOf('import strictLint');
+    expect(inserted).toBeGreaterThan(real);
+    expect(out.indexOf("*/")).toBeLessThan(real);
+  });
+
+  test("a commented-out trailing config does not steal the entries", () => {
+    const source = `import js from "@eslint/js";
+
+export default [
+  js.configs.recommended,
+];
+
+/*
+const config = defineConfig([old]);
+export default config;
+*/
+`;
+    const out = patch(source);
+    expect(out).toContain("js.configs.recommended,\n  strictLint.configs.recommended,");
+    expect(out.indexOf("strictLint.configs.recommended")).toBeLessThan(out.indexOf("/*"));
+  });
+
+  test("a commented-out declaration does not redirect the variable lookup", () => {
+    const source = `// const eslintConfig = defineConfig([decoy]);
+const eslintConfig = defineConfig([real]);
+
+export default eslintConfig;
+`;
+    const out = patch(source);
+    expect(out).toContain("defineConfig([real,\n  strictLint.configs.recommended,");
+    expect(out).toContain("// const eslintConfig = defineConfig([decoy]);");
   });
 });

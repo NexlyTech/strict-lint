@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { patchFlatConfig } from "./eslint-patch.js";
 import { PLUGIN_NAME, VERSION, rules } from "./index.js";
@@ -27,10 +27,12 @@ const KNOWN_FLAGS = new Set([
   "--dry-run",
   "--no-install",
   "--no-edit",
+  "--strict",
 ]);
 
 type PackageManager = "bun" | "pnpm" | "yarn" | "npm";
 type Target = "oxlint" | "eslint";
+type Preset = "recommended" | "warn";
 
 const ADD: Record<PackageManager, string[]> = {
   bun: ["add", "-d"],
@@ -91,6 +93,23 @@ function dependencyNames(cwd: string): Set<string> {
   return names;
 }
 
+/** Any existing source file means these rules are being added to code that predates them. */
+function hasSource(dir: string, depth = 0): boolean {
+  if (depth > 4) return false;
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  for (const entry of entries) {
+    if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+    if (entry.isFile() && /\.[jt]sx?$/.test(entry.name)) return true;
+    if (entry.isDirectory() && hasSource(join(dir, entry.name), depth + 1)) return true;
+  }
+  return false;
+}
+
 function detectSourceRoot(cwd: string): string {
   for (const candidate of ["src", "app", "source"]) {
     if (existsSync(join(cwd, candidate))) return candidate;
@@ -121,18 +140,35 @@ function seedConfig(root: string): string {
   )}\n`;
 }
 
-function ruleEntries(): Record<string, string> {
-  return Object.fromEntries(Object.keys(rules).map((name) => [`${PLUGIN_NAME}/${name}`, "error"]));
+function ruleEntries(preset: Preset): Record<string, string> {
+  const level = preset === "warn" ? "warn" : "error";
+  return Object.fromEntries(Object.keys(rules).map((name) => [`${PLUGIN_NAME}/${name}`, level]));
 }
 
 const ESLINT_IMPORTS = `import strictLint from "${PACKAGE_NAME}";
 import tsParser from "${PARSER_NAME}";`;
 
-const ESLINT_ENTRIES = `strictLint.configs.recommended,
+const PATCH_IMPORT = `import strictLint from "${PACKAGE_NAME}";`;
+
+const TS_PARSER_SIGNALS = ["@typescript-eslint/parser", "typescript-eslint", "tseslint", "eslint-config-next"];
+
+/**
+ * Whether the host config already parses TypeScript. When it does, the patch adds the preset and
+ * nothing else, because appending our own `languageOptions` would override theirs on every file
+ * it matches. When it does not, our rules would silently skip `.ts`/`.tsx`, so the parser block
+ * goes in too.
+ */
+function parsesTypeScript(source: string, dependencies: Set<string>): boolean {
+  return TS_PARSER_SIGNALS.some((signal) => source.includes(signal) || dependencies.has(signal));
+}
+
+function eslintEntries(preset: Preset): string {
+  return `strictLint.configs.${preset},
 {
   files: ["**/*.{ts,tsx,js,jsx}"],
   languageOptions: { parser: tsParser, parserOptions: { ecmaFeatures: { jsx: true } } },
 }`;
+}
 
 function indented(block: string): string {
   return block
@@ -141,13 +177,13 @@ function indented(block: string): string {
     .join("\n");
 }
 
-function eslintConfigSource(): string {
-  return `${ESLINT_IMPORTS}\n\nexport default [\n${indented(ESLINT_ENTRIES)},\n];\n`;
+function eslintConfigSource(preset: Preset): string {
+  return `${ESLINT_IMPORTS}\n\nexport default [\n${indented(eslintEntries(preset))},\n];\n`;
 }
 
-/** What to paste when the existing config could not be edited: imports, then array entries. */
-function eslintSnippet(): string {
-  return `${ESLINT_IMPORTS}\n\n// …then add these to the array your config exports:\n${ESLINT_ENTRIES},`;
+/** What to paste when the existing config could not be edited. */
+function eslintSnippet(preset: Preset): string {
+  return `${PATCH_IMPORT}\n\n// …then add this to the array your config exports:\n  strictLint.configs.${preset},`;
 }
 
 function installCommand(manager: PackageManager, packages: string[]): string {
@@ -167,6 +203,7 @@ Commands
 Options
   --no-install    Write the config files but skip the dependency install.
   --no-edit       Print the ESLint block instead of patching an existing config.
+  --strict        Report as errors even in a project that already has source files.
   --force         Overwrite files that already exist.
   --dry-run       Print what would change without writing or installing anything.
   -h, --help      Show this message.
@@ -190,11 +227,13 @@ interface Plan {
   added?: string[];
   /** Print the paste-in block, because the file could not be edited safely. */
   printSnippet?: boolean;
+  /** Only a config this command writes from scratch needs the parser installed alongside it. */
+  needsParser?: boolean;
 }
 
-function planOxlint(cwd: string, force: boolean): Plan {
+function planOxlint(cwd: string, force: boolean, preset: Preset): Plan {
   const path = join(cwd, OXLINT_FILE);
-  const entries = ruleEntries();
+  const entries = ruleEntries(preset);
 
   if (!existsSync(path)) {
     const contents = `${JSON.stringify({ jsPlugins: [PACKAGE_NAME], rules: entries }, null, 2)}\n`;
@@ -233,14 +272,33 @@ function planOxlint(cwd: string, force: boolean): Plan {
   };
 }
 
-function planEslint(cwd: string, existing: string | undefined, force: boolean, noEdit: boolean): Plan {
+function planEslint(
+  cwd: string,
+  existing: string | undefined,
+  force: boolean,
+  noEdit: boolean,
+  preset: Preset,
+  dependencies: Set<string>,
+): Plan {
   if (existing === undefined) {
-    return { path: join(cwd, ESLINT_FILE), contents: eslintConfigSource(), action: "create" };
+    return {
+      path: join(cwd, ESLINT_FILE),
+      contents: eslintConfigSource(preset),
+      action: "create",
+      needsParser: true,
+    };
   }
 
   const path = join(cwd, existing);
   if (force) {
-    return { path, contents: eslintConfigSource(), action: "update", backup: true, note: "replaced wholesale" };
+    return {
+      path,
+      contents: eslintConfigSource(preset),
+      action: "update",
+      backup: true,
+      needsParser: true,
+      note: "replaced wholesale",
+    };
   }
   if (noEdit) {
     return { path, contents: "", action: "skip", note: "--no-edit given", printSnippet: true };
@@ -253,9 +311,10 @@ function planEslint(cwd: string, existing: string | undefined, force: boolean, n
     return { path, contents: "", action: "skip", note: `${existing} could not be read`, printSnippet: true };
   }
 
+  const covered = parsesTypeScript(source, dependencies);
   const result = patchFlatConfig(source, {
-    imports: ESLINT_IMPORTS,
-    entries: ESLINT_ENTRIES,
+    imports: covered ? PATCH_IMPORT : ESLINT_IMPORTS,
+    entries: covered ? `strictLint.configs.${preset}` : eslintEntries(preset),
     marker: PACKAGE_NAME,
   });
 
@@ -265,7 +324,14 @@ function planEslint(cwd: string, existing: string | undefined, force: boolean, n
   if (result.status === "unsupported") {
     return { path, contents: "", action: "skip", note: result.reason, printSnippet: true };
   }
-  return { path, contents: result.source, action: "update", backup: true, added: result.added };
+  return {
+    path,
+    contents: result.source,
+    action: "update",
+    backup: true,
+    added: result.added,
+    needsParser: !covered,
+  };
 }
 
 function install(cwd: string, manager: PackageManager, packages: string[]): boolean {
@@ -314,6 +380,8 @@ function run(argv: string[]): number {
   const eslintConfig = ESLINT_FILES.find((name) => existsSync(join(cwd, name)));
   const targets = detectTargets(cwd, dependencies, eslintConfig);
   const root = detectSourceRoot(cwd);
+  const existingCode = hasSource(join(cwd, root));
+  const preset: Preset = flags.has("--strict") || !existingCode ? "recommended" : "warn";
   const plans: Plan[] = [];
 
   const configPath = join(cwd, CONFIG_FILE);
@@ -333,8 +401,10 @@ function run(argv: string[]): number {
         },
   );
 
-  if (targets.includes("oxlint")) plans.push(planOxlint(cwd, force));
-  if (targets.includes("eslint")) plans.push(planEslint(cwd, eslintConfig, force, flags.has("--no-edit")));
+  if (targets.includes("oxlint")) plans.push(planOxlint(cwd, force, preset));
+  if (targets.includes("eslint")) {
+    plans.push(planEslint(cwd, eslintConfig, force, flags.has("--no-edit"), preset, dependencies));
+  }
 
   for (const plan of plans) {
     const label = relative(cwd, plan.path) || plan.path;
@@ -352,12 +422,12 @@ function run(argv: string[]): number {
   }
 
   if (plans.some((plan) => plan.printSnippet)) {
-    process.stdout.write(`\nAdd this to ${eslintConfig}:\n\n${eslintSnippet().replace(/^/gm, "  ")}\n`);
+    process.stdout.write(`\nAdd this to ${eslintConfig}:\n\n${eslintSnippet(preset).replace(/^/gm, "  ")}\n`);
   }
 
   const packages = [
     ...(dependencies.has(PACKAGE_NAME) ? [] : [PACKAGE_NAME]),
-    ...(targets.includes("eslint") && !dependencies.has(PARSER_NAME) ? [PARSER_NAME] : []),
+    ...(plans.some((plan) => plan.needsParser) && !dependencies.has(PARSER_NAME) ? [PARSER_NAME] : []),
   ];
 
   let installed = true;
@@ -382,6 +452,12 @@ function run(argv: string[]): number {
   if (dryRun) {
     process.stdout.write("\nDry run: nothing was written or installed.\n");
     return 0;
+  }
+
+  if (preset === "warn") {
+    process.stdout.write("\nThese rules are reporting as warnings, since this project already has source\n");
+    process.stdout.write("files that predate them. Switch to `strictLint.configs.recommended` (or rerun\n");
+    process.stdout.write("with --strict) once the existing violations are cleared.\n");
   }
 
   process.stdout.write("\nNext steps\n");

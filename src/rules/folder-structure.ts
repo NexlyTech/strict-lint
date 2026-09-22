@@ -21,7 +21,7 @@ export const folderStructure: RuleModule<Record<string, unknown>> = {
     docs: {
       description: "Require every source file to sit at a location the configured structure allows.",
       recommended: true,
-      url: "https://github.com/nexlytech/strict-lint#folder-structure",
+      url: "https://github.com/NexlyTech/strict-lint#folder-structure",
     },
     schema: [{ type: "object", additionalProperties: true }],
   },

@@ -10,7 +10,7 @@ export const noNativeElements: RuleModule<Record<string, unknown>> = {
     docs: {
       description: "Disallow native HTML elements that the design system owns.",
       recommended: true,
-      url: "https://github.com/nexlytech/strict-lint#no-native-elements",
+      url: "https://github.com/NexlyTech/strict-lint#no-native-elements",
     },
     schema: [{ type: "object", additionalProperties: true }],
   },

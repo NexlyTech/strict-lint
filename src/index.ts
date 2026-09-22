@@ -6,6 +6,7 @@ import { noNativeElements } from "./rules/no-native-elements.js";
 import type { Plugin, RuleModule } from "./types.js";
 
 export const PLUGIN_NAME = "strict-lint";
+// Keep in sync with package.json — linters surface this in plugin metadata.
 export const VERSION = "0.1.0";
 
 export const rules = {

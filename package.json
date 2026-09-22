@@ -2,7 +2,27 @@
   "name": "@nexlytech/strict-lint",
   "version": "0.1.0",
   "description": "Folder-structure, one-component-per-file and native-element linting for React. One rule core, runs on both ESLint and oxlint.",
+  "keywords": [
+    "eslint",
+    "eslintplugin",
+    "eslint-plugin",
+    "oxlint",
+    "oxlint-plugin",
+    "react",
+    "architecture",
+    "folder-structure",
+    "shadcn"
+  ],
   "license": "MIT",
+  "author": "NexlyTech",
+  "homepage": "https://github.com/NexlyTech/strict-lint#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NexlyTech/strict-lint.git"
+  },
+  "bugs": {
+    "url": "https://github.com/NexlyTech/strict-lint/issues"
+  },
   "type": "module",
   "sideEffects": false,
   "engines": {
@@ -26,7 +46,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsdown && node scripts/cjs-interop.mjs",
@@ -34,8 +55,11 @@
     "test": "bun test",
     "prepublishOnly": "bun run typecheck && bun run test && bun run build"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "peerDependencies": {
-    "eslint": "^10.11.0",
+    "eslint": ">=8.57.0",
     "oxlint": "^1.0.0"
   },
   "peerDependenciesMeta": {
@@ -52,16 +76,5 @@
     "@typescript-eslint/parser": "^8.70.1",
     "tsdown": "^0.23.0",
     "typescript": "^5.7.2"
-  },
-  "keywords": [
-    "eslint",
-    "eslintplugin",
-    "eslint-plugin",
-    "oxlint",
-    "oxlint-plugin",
-    "react",
-    "architecture",
-    "folder-structure",
-    "shadcn"
-  ]
+  }
 }

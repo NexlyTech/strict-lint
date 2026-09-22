@@ -16,6 +16,9 @@ Zero runtime dependencies.
 bun add -d @nexlytech/strict-lint
 ```
 
+Works with oxlint `>=1.0` and ESLint `>=8.57`. On ESLint 8.57 flat config is opt-in, so run it with
+`ESLINT_USE_FLAT_CONFIG=true`; ESLint 9 and 10 need no flag. Node `>=18`.
+
 ## Setup
 
 ### oxlint
@@ -61,18 +64,29 @@ export default [
 ];
 ```
 
-Or take the preset: `strictLint.configs.recommended` (all errors) / `strictLint.configs.warn`
-(all warnings, for incremental adoption).
+Or take the preset, which registers the plugin and turns on every rule:
+
+```js
+import strictLint from "@nexlytech/strict-lint";
+
+export default [
+  strictLint.configs.recommended, // or strictLint.configs.warn for incremental adoption
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    languageOptions: { parser: tsParser, parserOptions: { ecmaFeatures: { jsx: true } } },
+  },
+];
+```
 
 ## Rules
 
-| Rule | What it enforces |
-| --- | --- |
-| `file-naming` | File names follow the casing convention configured for their location. |
-| `folder-structure` | Every file sits at a location `structure.allow` permits. |
-| `import-boundaries` | Dependencies flow in one direction, and features stay isolated from each other. |
-| `max-components-per-file` | A file declares at most `components.max` React components. |
-| `no-native-elements` | Native tags the design system owns are replaced by their components. |
+| Rule | What it enforces | Config key |
+| --- | --- | --- |
+| [`file-naming`](#file-naming) | File names follow the casing convention set for their location. | `naming` |
+| [`folder-structure`](#folder-structure) | Every file sits at a location the structure permits. | `structure` |
+| [`import-boundaries`](#import-boundaries) | Dependencies flow one way, and features stay isolated. | `boundaries` |
+| [`max-components-per-file`](#max-components-per-file) | A file declares at most N React components. | `components` |
+| [`no-native-elements`](#no-native-elements) | Native tags the design system owns are replaced. | `elements` |
 
 ## Configuration
 
@@ -128,9 +142,9 @@ The directory treated as the source root, matched **right-to-left** in the path,
 `apps/web/src/features/auth/X.tsx` resolves to `features/auth/X.tsx` in a monorepo. Files outside
 the source root are never reported.
 
-### `structure`
+### `folder-structure`
 
-`allow` is a list of globs relative to `root`. `deny` is checked first so a wrong location can carry
+Configured under `structure`. `allow` is a list of globs relative to `root`. `deny` is checked first so a wrong location can carry
 a specific message instead of the generic one. Supported glob syntax: `*`, `**`, `?`, `{a,b}`.
 
 The default preset is the feature-based structure:
@@ -156,18 +170,18 @@ src/
 └── types/
 ```
 
-### `components`
+### `max-components-per-file`
 
-`max` defaults to `1`; set `2` to allow a component plus one local sub-component.
+Configured under `components`. `max` defaults to `1`; set `2` to allow a component plus one local sub-component.
 
 A declaration counts as a component when its name is PascalCase, its initializer is callable, and
 its body produces JSX. That deliberately excludes hooks, Zod schemas, `cva` variants,
 `createContext` values, `styled` definitions, and PascalCase arrays that happen to hold JSX.
 `forwardRef` and `memo` wrappers do count.
 
-### `naming`
+### `file-naming`
 
-A list of `{ files, case, prefix?, suffix? }` rules. **The last matching rule wins**, so a narrow
+Configured under `naming`, as a list of `{ files, case, prefix?, suffix? }` rules. **The last matching rule wins**, so a narrow
 rule placed after a broad one overrides it. Cases: `PascalCase`, `camelCase`, `kebab-case`,
 `snake_case`, `SCREAMING_SNAKE_CASE`, `any`.
 
@@ -186,9 +200,9 @@ The stem is everything before the first dot, so `Button.stories.tsx` is checked 
 suggested rename keeps `.stories.tsx` intact. `allowNames` (default `["index"]`) accepts stems
 verbatim under any rule.
 
-### `boundaries`
+### `import-boundaries`
 
-Two checks in one rule.
+Configured under `boundaries`. Two checks in one rule.
 
 **Layers.** Every file falls into the first `layers` entry whose globs match it, and `rules` say
 which layers a layer may not import from. The default graph is one-directional:
@@ -207,13 +221,16 @@ shared   →  may import shared;  ✗ feature, ✗ route
 | `"public"` | A feature may import another only through `features/<name>/index.ts`, never its internals. |
 | `"allow"` | No check. |
 
-Specifiers resolve through `aliases` (`@/` and `~/` by default, both mapping to the source root)
+Specifiers resolve through `aliases` (`@/` and `~/` by default, both mapping to the source root;
+setting the key replaces the whole map)
 and through relative paths, so `../../billing/services` is caught the same as
 `@/features/billing/services`. Bare package specifiers and node builtins are never resolved.
 `import`, `export … from`, `export *`, and dynamic `import()` are all checked. Set
 `ignoreTypeImports: true` to exempt `import type`.
 
-### `elements`
+### `no-native-elements`
+
+Configured under `elements`.
 
 - `mode: "deny"` (default) bans only the tags listed in `deny`. Everything else is fine.
 - `mode: "allow"` bans every intrinsic tag absent from `allow`. Use this to lock a design system down.

@@ -21,7 +21,7 @@ export const fileNaming: RuleModule<Record<string, unknown>> = {
     docs: {
       description: "Require file names to follow the casing convention configured for their location.",
       recommended: true,
-      url: "https://github.com/nexlytech/strict-lint#file-naming",
+      url: "https://github.com/NexlyTech/strict-lint#file-naming",
     },
     schema: [{ type: "object", additionalProperties: true }],
   },

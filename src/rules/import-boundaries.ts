@@ -26,7 +26,7 @@ export const importBoundaries: RuleModule<Record<string, unknown>> = {
     docs: {
       description: "Enforce the dependency direction between layers and isolation between features.",
       recommended: true,
-      url: "https://github.com/nexlytech/strict-lint#import-boundaries",
+      url: "https://github.com/NexlyTech/strict-lint#import-boundaries",
     },
     schema: [{ type: "object", additionalProperties: true }],
   },

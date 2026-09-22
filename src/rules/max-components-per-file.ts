@@ -12,7 +12,7 @@ export const maxComponentsPerFile: RuleModule<Record<string, unknown>> = {
     docs: {
       description: "Limit how many React components a single file may declare.",
       recommended: true,
-      url: "https://github.com/nexlytech/strict-lint#max-components-per-file",
+      url: "https://github.com/NexlyTech/strict-lint#max-components-per-file",
     },
     schema: [{ type: "object", additionalProperties: true }],
   },
